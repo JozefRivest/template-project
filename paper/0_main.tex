@@ -1,5 +1,5 @@
 \documentclass[12pt]{article}
-\title{Cool paper dude}
+\title{Title of the paper}
 \author{Jozef Rivest}
 
 \usepackage[margin=1in]{geometry}
@@ -13,23 +13,22 @@
 \usepackage{float}
 \usepackage{amssymb}
 \usepackage{multirow}
+\usepackage{parskip}
 
 
 \begin{document}
 \maketitle
 \begin{abstract}
-	I just added the abstract
+	\textbf{Placeholder}
 \end{abstract}
 
-\section{Introduction}
+\input{1_introduction.tex}
+\input{2_literature.tex}
+\input{3_method.tex}
+\input{4_analyses.tex}
+\input{5_conclusion.tex}
 
-This is the joint probability
-
-\begin{equation}
-	P(A,B) = P(B,A)
-\end{equation}
-
-Wow! This is such a cool sentence!
+%\section{Acknowledgement}
 
 \printbibliography
 \end{document}

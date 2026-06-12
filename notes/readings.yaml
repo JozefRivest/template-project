@@ -1,0 +1,51 @@
+- category: This is a category
+  entries:
+    - author: Author 1
+      date: "2026"
+      journal: APSR
+      title: ""
+      claim: "They claim they have the best paper ever. They say it's incredible!"
+      argument: They say so because they use RDD with discrete variables.
+      data: Electoral results data.
+      design: RDD.
+      empirical findings: Running for a seat increases the likelihood of being elected.
+      critique: Awesome, nothing to say.
+      future research: I want to do something like this!
+
+    - author: Author 2
+      date: "2026"
+      journal: APSR
+      title: ""
+      claim: They claim they have the best paper ever.
+      argument: They say so because they use RDD with discrete variables.
+      data: Electoral results data.
+      design: RDD.
+      empirical findings: Running for a seat increases the likelihood of being elected.
+      critique: Awesome, nothing to say.
+      future research: I want to do something like this!
+
+- category: Another category
+  entries:
+    - author: Author 3
+      date: "2026"
+      journal: APSR
+      title: ""
+      claim: They claim they have the best paper ever.
+      argument: They say so because they use RDD with discrete variables.
+      data: Electoral results data.
+      design: RDD.
+      empirical findings: Running for a seat increases the likelihood of being elected.
+      critique: Awesome, nothing to say.
+      future research: I want to do something like this!
+
+    - author: Author 4
+      date: "2026"
+      journal: APSR
+      title: ""
+      claim: They claim they have the best paper ever.
+      argument: They say so because they use RDD with discrete variables.
+      data: Electoral results data.
+      design: RDD.
+      empirical findings: Running for a seat increases the likelihood of being elected.
+      critique: Awesome, nothing to say.
+      future research: I want to do something like this!
