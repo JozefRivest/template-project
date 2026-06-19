@@ -34,3 +34,6 @@ Brief description of the project and its structure.
 └── references
     └── references.bib
 ```
+
+Everybody is welcome to use this template to organize their working 
+environment. You can fork or clone the repo as you wish.
