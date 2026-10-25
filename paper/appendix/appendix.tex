@@ -1,0 +1,48 @@
+% ============================================================
+% Appendix
+% ============================================================
+
+%% CHANGE LINE SPACE -----------------------------------------------------------------
+\setstretch{1}
+% \renewcommand{\footnotelayout}{\setstretch{1}}
+
+%% APPENDIX --------------------------------------------------------------------------
+\newpage
+\appendix
+\doparttoc % Tell minitoc to generate a ToC for the parts.
+\faketableofcontents % Run a fake tableofcontents command for the parttocs.
+
+\begin{center}
+	{\bf \LARGE Supplementary Materials} \\
+	\vspace{0.2in}
+	{\Large \title}
+\end{center}
+
+\vspace{-0.5in}
+\thispagestyle{empty}
+\addcontentsline{toc}{section}{Appendix} % Add the appendix text to the document ToC.
+\part{} % Start the appendix part.
+\parttoc % Insert the appendix ToC.
+
+\newpage
+\renewcommand{\thepage}{A\arabic{page}}
+\renewcommand{\thetable}{A\arabic{table}}
+\renewcommand{\thefigure}{A\arabic{figure}}
+\setcounter{page}{1}
+\setcounter{table}{1}
+\setcounter{figure}{1}
+\setcounter{footnote}{0}
+
+\counterwithin{table}{section}
+\counterwithin{figure}{section}
+
+% ----------------------------
+% Appendix sections
+% ----------------------------
+\clearpage
+\input{appendix/appendix_design}
+
+\clearpage
+\input{appendix/appendix_results}
+
+\clearpage

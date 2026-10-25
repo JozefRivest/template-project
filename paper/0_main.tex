@@ -2,35 +2,28 @@
 \title{Title of the paper}
 \author{Jozef Rivest}
 
-\usepackage[margin=1in]{geometry}
-\usepackage[authordate, backend=biber]{biblatex-chicago}
-%\addbibresource{}
-\usepackage[dvipsnames]{xcolor}
-\usepackage{hyperref}
-\hypersetup{colorlinks=true, linkcolor=Maroon, filecolor=Maroon, citecolor=Maroon, urlcolor=Maroon}
-\usepackage{graphicx}
-\usepackage{amsmath,amsthm}
-\usepackage{float}
-\usepackage{amssymb}
-\usepackage{multirow}
-\usepackage{parskip}
-
-% Tinytable preamble
-\usepackage{tabularray}
-\usepackage{float}
-\usepackage{graphicx}
-\usepackage{rotating}
-\usepackage[normalem]{ulem}
-\NewTableCommand{\tinytableDefineColor}[3]{\definecolor{#1}{#2}{#3}}
-\newcommand{\tinytableTabularrayUnderline}[1]{\underline{#1}}
-\newcommand{\tinytableTabularrayStrikeout}[1]{\sout{#1}}
+\input{0_preamble.tex}
 
 \begin{document}
 \maketitle
-\begin{abstract}
-	\textbf{Placeholder}
-\end{abstract}
 
+% ---- Abstract ---------------
+\begin{abstract}
+	\noindent
+	This sample abstract indicates where authors can state the research
+	question, describe the design, summarize the principal finding,
+	and explain the contribution. Replace these sample sentences
+	with an abstract tailored to the article.
+
+	\vspace{0.2in}
+
+	\noindent\textit{\textbf{Keywords:}} sample keyword, research design, empirical analysis \\
+	\noindent\textit{\textbf{Word Count:}} \wordcount
+\end{abstract}
+% ---------------------------------
+\clearpage
+
+% ---- Main text ------------------
 \input{1_introduction.tex}
 \input{2_theory.tex}
 \input{3_method.tex}
@@ -38,6 +31,12 @@
 \input{5_conclusion.tex}
 
 %\section{Acknowledgement}
+% ---------------------------------
 
 \printbibliography
+\clearpage
+
+%TC:ignore
+\input{appendix/appendix}
+%TC:endignore
 \end{document}
