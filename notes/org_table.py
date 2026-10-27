@@ -2,14 +2,6 @@
 """
 org_table.py - Render org/YAML reading notes as a table
 
-Org file structure:
-  * Section Name          <- becomes a full-width separator row in the table
-  ** Author Year          <- becomes an entry (Author field)
-  :PROPERTIES:
-  :Date: 2015
-  :Journal: JJSS
-  :END:
-
 YAML file structure:
   - category: Section Name
     entries:
@@ -226,6 +218,17 @@ def strip_inline(text: str) -> str:
     return s
 
 
+def header_label(col: str) -> str:
+    """Human-friendly column header: 'empirical findings' -> 'Empirical Findings'.
+
+    Words that are already all-caps (e.g. 'DOI', 'APSR') are left untouched.
+    """
+    words = str(col).replace("_", " ").split()
+    return " ".join(
+        w if (w.isupper() and len(w) > 1) else w.capitalize() for w in words
+    )
+
+
 def render_inline(text: str) -> str:
     """Convert **bold** and *italic*/_italic_ markers to HTML, escaping everything else."""
     parts = re.split(r"(\*\*[^*\n]+?\*\*|\*[^*\n]+?\*|_[^_\n]+?_)", str(text))
@@ -245,6 +248,115 @@ def render_inline(text: str) -> str:
 # ── HTML builder ───────────────────────────────────────────────────────────────
 
 
+# Excel-style drag-to-resize columns. Kept as a plain string (single braces) so it
+# can be dropped into build_html's f-string without brace-escaping every line.
+RESIZE_SCRIPT = """
+    // ── Drag-to-resize columns ──────────────────────────────────────────────
+    (function initResizableColumns() {
+      const table = document.getElementById("main-table");
+      const ths = Array.from(table.querySelectorAll("thead th"));
+      if (!ths.length) return;
+
+      const STORAGE_KEY = "rnt-colw:" + document.title + ":" + ths.length;
+      // +1px slack so fixed-layout rounding never re-wraps content that fit before.
+      let widths = ths.map(th => Math.ceil(th.getBoundingClientRect().width) + 1);
+      try {
+        const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
+        if (Array.isArray(saved) && saved.length === widths.length) widths = saved;
+      } catch (e) { /* ignore corrupt storage */ }
+
+      const colgroup = document.createElement("colgroup");
+      widths.forEach(w => {
+        const col = document.createElement("col");
+        col.style.width = w + "px";
+        colgroup.appendChild(col);
+      });
+      table.insertBefore(colgroup, table.firstChild);
+      const cols = Array.from(colgroup.children);
+
+      const applyTableWidth = () =>
+        table.style.width = widths.reduce((a, b) => a + b, 0) + "px";
+      table.style.tableLayout = "fixed";
+      applyTableWidth();
+
+      ths.forEach((th, i) => {
+        const grip = document.createElement("span");
+        grip.className = "col-resizer";
+        grip.title = "Drag to resize";
+        th.appendChild(grip);
+        // Don't let the grip trigger the column-sort click handler.
+        grip.addEventListener("click", e => e.stopPropagation());
+        grip.addEventListener("mousedown", e => {
+          e.preventDefault();
+          e.stopPropagation();
+          const startX = e.pageX, startW = widths[i];
+          document.body.classList.add("col-resizing");
+          const onMove = ev => {
+            widths[i] = Math.max(48, startW + (ev.pageX - startX));
+            cols[i].style.width = widths[i] + "px";
+            applyTableWidth();
+          };
+          const onUp = () => {
+            document.removeEventListener("mousemove", onMove);
+            document.removeEventListener("mouseup", onUp);
+            document.body.classList.remove("col-resizing");
+            try { localStorage.setItem(STORAGE_KEY, JSON.stringify(widths)); }
+            catch (e) { /* ignore */ }
+          };
+          document.addEventListener("mousemove", onMove);
+          document.addEventListener("mouseup", onUp);
+        });
+      });
+    })();
+"""
+
+
+# Light / Dark / Auto theme cycle. The <head> script has already resolved an
+# initial data-theme; this manages the three-way cycle, the button label, and
+# (in Auto) follows live OS changes. Plain string (single braces).
+THEME_SCRIPT = """
+    // ── Light / Dark / Auto theme cycle ─────────────────────────────────────
+    (function initThemeToggle() {
+      const root = document.documentElement;
+      const btn = document.getElementById("theme-toggle");
+      if (!btn) return;
+      const KEY = "rnt-theme";
+      const mql = window.matchMedia &&
+        window.matchMedia("(prefers-color-scheme: dark)");
+      const META = {
+        light: { icon: "☀️", label: "Light" },
+        dark:  { icon: "🌙", label: "Dark" },
+        auto:  { icon: "🌓", label: "Auto" },
+      };
+      const NEXT = { auto: "light", light: "dark", dark: "auto" };
+      const getMode = () => {
+        const m = localStorage.getItem(KEY);
+        return (m === "light" || m === "dark") ? m : "auto";
+      };
+      const resolve = mode =>
+        mode === "auto" ? ((mql && mql.matches) ? "dark" : "light") : mode;
+      function apply(mode) {
+        root.setAttribute("data-theme", resolve(mode));
+        const info = META[mode];
+        btn.textContent = info.icon + " " + info.label;
+        btn.title = "Theme: " + info.label + " (click for " + META[NEXT[mode]].label + ")";
+        btn.setAttribute("aria-label", btn.title);
+      }
+      apply(getMode());
+      btn.addEventListener("click", () => {
+        const next = NEXT[getMode()];
+        try {
+          if (next === "auto") localStorage.removeItem(KEY);
+          else localStorage.setItem(KEY, next);
+        } catch (e) { /* ignore */ }
+        apply(next);
+      });
+      if (mql && mql.addEventListener)
+        mql.addEventListener("change", () => { if (getMode() === "auto") apply("auto"); });
+    })();
+"""
+
+
 def build_html(items, filepath, columns=None, sort_by=None, filter_by=None, live=False):
     result, sectioned = apply_filters(items, sort_by, filter_by)
     if result is None:
@@ -256,7 +368,7 @@ def build_html(items, filepath, columns=None, sort_by=None, filter_by=None, live
     title = Path(filepath).stem
     num_cols = len(cols)
 
-    header_cells = "".join(f"<th>{esc(col)}</th>" for col in cols)
+    header_cells = "".join(f"<th>{esc(header_label(col))}</th>" for col in cols)
 
     body_rows = ""
     if sectioned:
@@ -315,13 +427,72 @@ def build_html(items, filepath, columns=None, sort_by=None, filter_by=None, live
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{esc(title)}</title>
+  <script>
+    // Resolve theme before paint (saved choice, else OS) to avoid a flash.
+    try {{
+      var _t = localStorage.getItem("rnt-theme");
+      if (_t !== "dark" && _t !== "light")
+        _t = (window.matchMedia &&
+          window.matchMedia("(prefers-color-scheme: dark)").matches)
+          ? "dark" : "light";
+      document.documentElement.setAttribute("data-theme", _t);
+    }} catch (e) {{}}
+  </script>
   <style>
+    :root {{
+      --bg: #f4f5f4;
+      --panel: #ffffff;
+      --text: #23282b;
+      --muted: #8a908d;
+      --heading: #2f3633;
+      --border: #ececec;
+      --row-alt: #fafbfa;
+      --row-hover: #eef5f0;
+      --accent: #2d6a4f;
+      --accent-dark: #245a42;
+      --accent-soft: #d8f3dc;
+      --section-bg: #b7e4c7;
+      --section-text: #1b4332;
+      --section-border: #74c69d;
+      --subsection-bg: #d8f3dc;
+      --subsection-text: #2d6a4f;
+      --subsection-border: #95d5b2;
+      --header-text: #ffffff;
+      --input-border: #cfd3d1;
+      --shadow: 0 1px 4px rgba(0,0,0,0.12);
+      --grip: rgba(255,255,255,0.35);
+      --grip-hover: rgba(255,255,255,0.95);
+    }}
+    :root[data-theme="dark"] {{
+      --bg: #14181b;
+      --panel: #1b2126;
+      --text: #dbe3e2;
+      --muted: #7c8582;
+      --heading: #e7edeb;
+      --border: #2a3237;
+      --row-alt: #1f262b;
+      --row-hover: #202f27;
+      --accent: #2f6f52;
+      --accent-dark: #3c8a67;
+      --accent-soft: #17342552;
+      --section-bg: #1c3a2b;
+      --section-text: #b7e4c7;
+      --section-border: #2d6a4f;
+      --subsection-bg: #16281f;
+      --subsection-text: #95d5b2;
+      --subsection-border: #2d6a4f;
+      --header-text: #eafff4;
+      --input-border: #384149;
+      --shadow: 0 1px 4px rgba(0,0,0,0.45);
+      --grip: rgba(255,255,255,0.28);
+      --grip-hover: rgba(255,255,255,0.85);
+    }}
     * {{ box-sizing: border-box; margin: 0; padding: 0; }}
     body {{
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       font-size: 18px;
-      background: #f5f5f5;
-      color: #222;
+      background: var(--bg);
+      color: var(--text);
       padding: 2rem;
     }}
     .header {{
@@ -330,12 +501,12 @@ def build_html(items, filepath, columns=None, sort_by=None, filter_by=None, live
       gap: 0.75rem;
       margin-bottom: 1rem;
     }}
-    h1 {{ font-size: 1.4rem; font-weight: 600; color: #333; }}
+    h1 {{ font-size: 1.4rem; font-weight: 600; color: var(--heading); }}
     .live-badge {{
       font-size: 0.75rem;
       font-weight: 600;
-      color: #2d6a4f;
-      background: #d8f3dc;
+      color: var(--subsection-text);
+      background: var(--accent-soft);
       padding: 2px 8px;
       border-radius: 999px;
       animation: pulse 2s infinite;
@@ -347,67 +518,109 @@ def build_html(items, filepath, columns=None, sort_by=None, filter_by=None, live
     .controls {{ display: flex; gap: 0.75rem; margin-bottom: 1rem; }}
     input[type="text"] {{
       padding: 7px 12px;
-      border: 1px solid #ccc;
+      border: 1px solid var(--input-border);
       border-radius: 6px;
       font-size: 14px;
       width: 300px;
       outline: none;
+      background: var(--panel);
+      color: var(--text);
     }}
-    input[type="text"]:focus {{ border-color: #2d6a4f; }}
+    input[type="text"]:focus {{ border-color: var(--accent); }}
     .table-wrapper {{
-      overflow-x: auto;
+      overflow: auto;
+      max-height: calc(100vh - 11rem);
       border-radius: 8px;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.12);
+      box-shadow: var(--shadow);
     }}
-    table {{ border-collapse: collapse; width: 100%; background: #fff; }}
-    thead {{ background: #2d6a4f; color: #fff; }}
+    table {{ border-collapse: collapse; width: 100%; background: var(--panel); }}
+    thead {{ background: var(--accent); color: var(--header-text); }}
     th {{
-      padding: 10px 14px;
+      position: sticky;
+      top: 0;
+      z-index: 3;
+      background: var(--accent);
+      padding: 10px 16px 10px 14px;
       text-align: left;
       font-weight: 600;
       white-space: nowrap;
       cursor: pointer;
       user-select: none;
     }}
-    th:hover {{ background: #245a42; }}
+    th:hover {{ background: var(--accent-dark); }}
     th.sorted-asc::after  {{ content: " ▲"; font-size: 0.75em; }}
     th.sorted-desc::after {{ content: " ▼"; font-size: 0.75em; }}
+    .col-resizer {{
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 10px;
+      height: 100%;
+      cursor: col-resize;
+      user-select: none;
+      touch-action: none;
+    }}
+    .col-resizer::before {{
+      content: "";
+      position: absolute;
+      top: 22%;
+      right: 4px;
+      height: 56%;
+      border-right: 2px solid var(--grip);
+      transition: border-color 0.12s;
+    }}
+    .col-resizer:hover::before,
+    body.col-resizing .col-resizer::before {{ border-color: var(--grip-hover); }}
+    body.col-resizing {{ cursor: col-resize; user-select: none; }}
     td {{
       padding: 9px 14px;
-      border-bottom: 1px solid #eee;
+      border-bottom: 1px solid var(--border);
       vertical-align: top;
       max-width: 300px;
       word-wrap: break-word;
     }}
     tr.section-row td {{
-      background: #b7e4c7;
-      color: #1b4332;
+      background: var(--section-bg);
+      color: var(--section-text);
       font-weight: 700;
       font-size: 0.9rem;
       letter-spacing: 0.04em;
       text-transform: uppercase;
       padding: 7px 14px;
-      border-bottom: 2px solid #74c69d;
+      border-bottom: 2px solid var(--section-border);
     }}
     tr.subsection-row td {{
-      background: #d8f3dc;
-      color: #2d6a4f;
+      background: var(--subsection-bg);
+      color: var(--subsection-text);
       font-weight: 600;
       font-size: 0.85rem;
       letter-spacing: 0.02em;
       padding: 5px 20px;
-      border-bottom: 1px solid #95d5b2;
+      border-bottom: 1px solid var(--subsection-border);
     }}
     tr:last-child td {{ border-bottom: none; }}
-    tr:not(.section-row):nth-child(even) {{ background: #f9f9f9; }}
-    tr:not(.section-row):hover {{ background: #eaf4ee; }}
-    .count {{ margin-top: 0.75rem; font-size: 0.85rem; color: #888; }}
+    tr:not(.section-row):nth-child(even) {{ background: var(--row-alt); }}
+    tr:not(.section-row):hover {{ background: var(--row-hover); }}
+    .count {{ margin-top: 0.75rem; font-size: 0.85rem; color: var(--muted); }}
+    .theme-toggle {{
+      margin-left: auto;
+      border: 1px solid var(--input-border);
+      background: var(--panel);
+      color: var(--text);
+      border-radius: 6px;
+      padding: 5px 10px;
+      font-size: 1rem;
+      line-height: 1;
+      cursor: pointer;
+    }}
+    .theme-toggle:hover {{ border-color: var(--accent); }}
   </style>
 </head>
 <body>
   <div class="header">
     <h1>{esc(title)}</h1>
     {live_badge}
+    <button id="theme-toggle" class="theme-toggle" type="button">🌙</button>
   </div>
   <div class="controls">
     <input type="text" id="search" placeholder="Search entries…" oninput="filterTable()" />
@@ -460,6 +673,10 @@ def build_html(items, filepath, columns=None, sort_by=None, filter_by=None, live
         th.classList.add(sortAsc ? "sorted-asc" : "sorted-desc");
       }});
     }});
+
+    {THEME_SCRIPT}
+
+    {RESIZE_SCRIPT}
 
     {live_script}
   </script>
@@ -736,38 +953,67 @@ GRAPH_TEMPLATE = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>__TITLE__ — citation graph</title>
 <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+<script>
+  // Resolve theme before paint (saved choice, else OS) to avoid a flash.
+  try {
+    var _t = localStorage.getItem("rnt-theme");
+    if (_t !== "dark" && _t !== "light")
+      _t = (window.matchMedia &&
+        window.matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
+    document.documentElement.setAttribute("data-theme", _t);
+  } catch (e) {}
+</script>
 <style>
+  :root {
+    --bg: #f4f5f4; --panel: #ffffff; --text: #23282b; --muted: #8a908d;
+    --heading: #2f3633; --label: #55605b; --accent: #2d6a4f;
+    --input-border: #cfd3d1; --shadow: 0 1px 4px rgba(0,0,0,0.12);
+    --net-bg: #ffffff; --hint: #9aa19d;
+  }
+  :root[data-theme="dark"] {
+    --bg: #14181b; --panel: #1b2126; --text: #dbe3e2; --muted: #7c8582;
+    --heading: #e7edeb; --label: #9aa8a2; --accent: #3c8a67;
+    --input-border: #384149; --shadow: 0 1px 4px rgba(0,0,0,0.45);
+    --net-bg: #10151a; --hint: #6d746f;
+  }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    font-size: 16px; background: #f5f5f5; color: #222; padding: 1.5rem; }
+    font-size: 16px; background: var(--bg); color: var(--text); padding: 1.5rem; }
   .header { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem; }
-  h1 { font-size: 1.4rem; font-weight: 600; color: #333; }
+  h1 { font-size: 1.4rem; font-weight: 600; color: var(--heading); }
   .controls { display: flex; gap: 0.75rem; align-items: center;
     margin-bottom: 1rem; flex-wrap: wrap; }
-  select { padding: 7px 12px; border: 1px solid #ccc; border-radius: 6px;
-    font-size: 14px; background: #fff; outline: none; max-width: 360px; }
-  select:focus { border-color: #2d6a4f; }
-  label { font-size: 0.85rem; color: #555; font-weight: 600; }
-  #network { height: 74vh; background: #fff; border-radius: 8px;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.12); }
-  .count { margin-top: 0.75rem; font-size: 0.85rem; color: #888; }
-  .legend { font-size: 0.8rem; color: #666; display: flex; gap: 1rem; align-items: center; }
+  select { padding: 7px 12px; border: 1px solid var(--input-border); border-radius: 6px;
+    font-size: 14px; background: var(--panel); color: var(--text);
+    outline: none; max-width: 360px; }
+  select:focus { border-color: var(--accent); }
+  label { font-size: 0.85rem; color: var(--label); font-weight: 600; }
+  #network { height: 74vh; background: var(--net-bg); border-radius: 8px;
+    box-shadow: var(--shadow); }
+  .count { margin-top: 0.75rem; font-size: 0.85rem; color: var(--muted); }
+  .legend { font-size: 0.8rem; color: var(--muted); display: flex; gap: 1rem;
+    align-items: center; }
   .dot { display: inline-block; width: 11px; height: 11px; border-radius: 50%;
     margin-right: 4px; vertical-align: middle; }
-  .hint { font-size: 0.8rem; color: #999; }
-  #detail { margin-top: 0.75rem; padding: 10px 14px; background: #fff;
-    border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.12);
+  .hint { font-size: 0.8rem; color: var(--hint); }
+  #detail { margin-top: 0.75rem; padding: 10px 14px; background: var(--panel);
+    border-radius: 8px; box-shadow: var(--shadow);
     font-size: 0.9rem; max-width: 720px; }
-  #detail a { color: #2d6a4f; word-break: break-all; }
+  #detail a { color: var(--accent); word-break: break-all; }
   #detail .doi-row { margin-top: 6px; }
-  #detail button { margin-left: 8px; padding: 3px 10px; border: 1px solid #2d6a4f;
-    background: #2d6a4f; color: #fff; border-radius: 5px; cursor: pointer;
+  #detail button { margin-left: 8px; padding: 3px 10px; border: 1px solid var(--accent);
+    background: var(--accent); color: #fff; border-radius: 5px; cursor: pointer;
     font-size: 0.8rem; }
-  #detail .no-doi { color: #999; margin-top: 6px; }
+  #detail .no-doi { color: var(--muted); margin-top: 6px; }
+  .theme-toggle { margin-left: auto; border: 1px solid var(--input-border);
+    background: var(--panel); color: var(--text); border-radius: 6px;
+    padding: 5px 10px; font-size: 1rem; line-height: 1; cursor: pointer; }
+  .theme-toggle:hover { border-color: var(--accent); }
 </style>
 </head>
 <body>
-  <div class="header"><h1>__TITLE__ — citation graph</h1></div>
+  <div class="header"><h1>__TITLE__ — citation graph</h1>
+    <button id="theme-toggle" class="theme-toggle" type="button">🌙</button></div>
   <div class="controls">
     <label for="view">View</label>
     <select id="view">
@@ -792,6 +1038,14 @@ GRAPH_TEMPLATE = """<!DOCTYPE html>
     const GRAPH = __GRAPH_JSON__;
     const FOCUS = __FOCUS__;
     const COLL = "#2d6a4f", EXT = "#bbb", FOCUSC = "#d00000";
+    const themeColors = () => {
+      const dark = document.documentElement.getAttribute("data-theme") === "dark";
+      return {
+        nodeFont: dark ? "#dbe3e2" : "#222",
+        edge: dark ? "#39434a" : "#cbcbcb",
+        edgeFaint: dark ? "#2c353b" : "#ddd",
+      };
+    };
     const container = document.getElementById("network");
     const viewSel = document.getElementById("view");
     const paperSel = document.getElementById("paper");
@@ -813,6 +1067,7 @@ GRAPH_TEMPLATE = """<!DOCTYPE html>
     });
 
     function draw() {
+      const TC = themeColors();
       let nodes = [], edges = [];
       if (viewSel.value === "collection") {
         nodes = GRAPH.nodes.map(n => ({
@@ -841,7 +1096,7 @@ GRAPH_TEMPLATE = """<!DOCTYPE html>
             doi: r.doi || "", refTitle: r.title || lbl,
             title: tip(r.title || lbl, r.doi) });
           edges.push({ from: pid, to: rid, arrows: "to",
-            color: { color: r.in_collection ? COLL : "#ddd" } });
+            color: { color: r.in_collection ? COLL : TC.edgeFaint } });
         });
         document.getElementById("count").textContent =
           refs.length + " references (" + inColl + " in your collection)";
@@ -851,8 +1106,8 @@ GRAPH_TEMPLATE = """<!DOCTYPE html>
       document.getElementById("detail").style.display = "none";
       const options = {
         layout: { randomSeed: 42 },
-        nodes: { font: { size: 14, color: "#222" }, borderWidth: 0 },
-        edges: { color: { color: "#cbcbcb" }, smooth: { type: "continuous" }, width: 1 },
+        nodes: { font: { size: 14, color: TC.nodeFont }, borderWidth: 0 },
+        edges: { color: { color: TC.edge }, smooth: { type: "continuous" }, width: 1 },
         physics: { stabilization: true,
           barnesHut: { gravitationalConstant: -8000, springLength: 120 } },
         interaction: { hover: true, tooltipDelay: 120 }
@@ -891,6 +1146,48 @@ GRAPH_TEMPLATE = """<!DOCTYPE html>
       draw();
     });
     paperSel.addEventListener("change", draw);
+
+    (function initThemeToggle() {
+      const root = document.documentElement;
+      const btn = document.getElementById("theme-toggle");
+      if (!btn) return;
+      const KEY = "rnt-theme";
+      const mql = window.matchMedia &&
+        window.matchMedia("(prefers-color-scheme: dark)");
+      const META = {
+        light: { icon: "☀️", label: "Light" },
+        dark:  { icon: "🌙", label: "Dark" },
+        auto:  { icon: "🌓", label: "Auto" },
+      };
+      const NEXT = { auto: "light", light: "dark", dark: "auto" };
+      const getMode = () => {
+        const m = localStorage.getItem(KEY);
+        return (m === "light" || m === "dark") ? m : "auto";
+      };
+      const resolve = mode =>
+        mode === "auto" ? ((mql && mql.matches) ? "dark" : "light") : mode;
+      function apply(mode) {
+        root.setAttribute("data-theme", resolve(mode));
+        const info = META[mode];
+        btn.textContent = info.icon + " " + info.label;
+        btn.title = "Theme: " + info.label + " (click for " + META[NEXT[mode]].label + ")";
+        btn.setAttribute("aria-label", btn.title);
+      }
+      apply(getMode());  // set data-theme before the first draw() below
+      btn.addEventListener("click", () => {
+        const next = NEXT[getMode()];
+        try {
+          if (next === "auto") localStorage.removeItem(KEY);
+          else localStorage.setItem(KEY, next);
+        } catch (e) {}
+        apply(next);
+        draw();  // recolor nodes/edges for the new theme
+      });
+      if (mql && mql.addEventListener)
+        mql.addEventListener("change", () => {
+          if (getMode() === "auto") { apply("auto"); draw(); }
+        });
+    })();
 
     if (FOCUS) {
       viewSel.value = "paper";
@@ -1078,6 +1375,17 @@ def format_entry_yaml(entry: dict) -> str:
             lines.append(f"      {field}: {_yaml_quote(val)}")
     lines.append(f"      doi: {_yaml_quote(entry.get('doi', ''))}")
     lines.append(f"      zotero_key: {_yaml_quote(entry.get('zotero_key', ''))}")
+    # Any extra note fields (e.g. claim, critique) follow the metadata.
+    fixed = ("author", "date", "journal", "title", "doi", "zotero_key")
+    for field, val in entry.items():
+        if field in fixed:
+            continue
+        val = str(val)
+        if "\n" in val:
+            body = "\n".join(f"        {l}" if l else "" for l in val.split("\n"))
+            lines.append(f"      {field}: |-\n{body}")
+        else:
+            lines.append(f"      {field}: {_yaml_quote(val)}")
     return "\n".join(lines)
 
 
@@ -1159,6 +1467,127 @@ def import_from_zotero(filepath: str, collection_name: str) -> None:
         print(f"  {no_doi} of them have no DOI in Zotero — add one to link them.")
 
 
+# ── Obsidian import ────────────────────────────────────────────────────────────
+
+# Obsidian headings whose field name differs from the YAML column name.
+OBSIDIAN_HEADING_ALIASES = {
+    "future research & discussion": "future research",
+}
+# Headings that are navigation rather than notes.
+OBSIDIAN_SKIP_HEADINGS = {"connections"}
+
+
+def _obsidian_clean(text: str) -> str:
+    """Turn Obsidian markdown into plain text with *italic*/**bold** kept."""
+    s = re.sub(r"!\[\[[^\]]*\]\]", "", text)  # embeds
+    s = re.sub(r"\[\[[^\]|]*\|([^\]]*)\]\]", r"\1", s)  # [[note|alias]]
+    s = re.sub(r"\[\[([^\]]*)\]\]", r"\1", s)  # [[note]]
+    s = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", s)  # [text](url)
+    s = re.sub(r"==(.+?)==", r"\1", s)  # highlights
+    s = re.sub(r"\n{3,}", "\n\n", s)
+    return s.strip()
+
+
+def _obsidian_author(authors) -> str:
+    """Format 'Last, First' author strings like the Zotero importer does."""
+    if isinstance(authors, str):
+        authors = [authors]
+    creators = [
+        {"lastName": _obsidian_clean(str(a)).split(",")[0]} for a in authors or []
+    ]
+    return _zotero_author(creators)
+
+
+def obsidian_note_to_entry(path: Path) -> Optional[dict]:
+    """Map an Obsidian literature note to an entry, or None if it isn't one."""
+    import yaml
+
+    text = path.read_text(encoding="utf-8")
+    m = re.match(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", text, flags=re.DOTALL)
+    if not m:
+        return None
+    try:
+        meta = yaml.safe_load(m.group(1)) or {}
+    except yaml.YAMLError:
+        print(f"  Skipping {path.name}: invalid frontmatter")
+        return None
+    if not isinstance(meta, dict) or not (meta.get("title") or meta.get("authors")):
+        return None
+
+    def prop(key):
+        val = meta.get(key)
+        return _obsidian_clean(str(val)) if val is not None else ""
+
+    entry = {
+        "author": _obsidian_author(meta.get("authors") or meta.get("author")),
+        "date": prop("date"),
+        "journal": prop("journal"),
+        "title": prop("title"),
+        "doi": get_doi({"doi": prop("doi")}),
+        "zotero_key": prop("zotero-key") or prop("zotero_key"),
+    }
+
+    # Each "## Heading" section becomes a field named after the heading.
+    for sec in re.split(r"^##\s+", m.group(2), flags=re.MULTILINE)[1:]:
+        heading, _, body = sec.partition("\n")
+        key = heading.strip().lower()
+        key = OBSIDIAN_HEADING_ALIASES.get(key, key)
+        if key in OBSIDIAN_SKIP_HEADINGS:
+            continue
+        entry[key] = _obsidian_clean(body)
+
+    # Fall back to frontmatter for note fields left empty in the body.
+    if not entry.get("claim") and prop("claim"):
+        entry["claim"] = prop("claim")
+    return entry
+
+
+def import_from_obsidian(
+    filepath: str, source: str, category: Optional[str] = None
+) -> None:
+    """Import Obsidian notes (a .md file or folder) into the YAML file (append-only)."""
+    src = Path(source).expanduser()
+    if not src.exists():
+        raise SystemExit(f"Not found: {src}")
+    notes = [src] if src.is_file() else sorted(src.rglob("*.md"))
+
+    known_keys, known_dois = existing_zotero_keys_and_dois(filepath)
+    known_titles = set()
+    if Path(filepath).exists():
+        known_titles = {
+            e["title"].strip().lower()
+            for e in entries_only(parse_yaml(filepath))
+            if e.get("title")
+        }
+
+    by_category: dict[str, list] = {}
+    skipped = 0
+    for note in notes:
+        entry = obsidian_note_to_entry(note)
+        if not entry:
+            continue
+        k, d = entry["zotero_key"], entry["doi"]
+        t = entry["title"].strip().lower()
+        if (k and k in known_keys) or (d and d in known_dois) or (t and t in known_titles):
+            skipped += 1
+            continue
+        known_keys.add(k)
+        known_dois.add(d)
+        known_titles.add(t)
+        by_category.setdefault(category or note.parent.name, []).append(entry)
+
+    added = sum(len(v) for v in by_category.values())
+    if not added:
+        print(f"Up to date: 0 new notes (skipped {skipped} already present).")
+        return
+    for cat, entries in by_category.items():
+        append_entries(filepath, cat, entries)
+    print(
+        f"Added {added} new note(s) to {filepath} "
+        f"(skipped {skipped} already present)."
+    )
+
+
 # ── Terminal rendering ─────────────────────────────────────────────────────────
 
 
@@ -1173,11 +1602,12 @@ def render_table(items, columns=None, sort_by=None, filter_by=None, max_width=30
     def truncate(text):
         return text[: max_width - 1] + "…" if len(text) > max_width else text
 
+    headers = [header_label(col) for col in cols]
     all_rows = [
         [truncate(strip_inline(e.get(col, ""))) for col in cols] for e in all_entries
     ]
     widths = [
-        max(len(col), max((len(r[i]) for r in all_rows), default=0))
+        max(len(headers[i]), max((len(r[i]) for r in all_rows), default=0))
         for i, col in enumerate(cols)
     ]
     total_width = sum(widths) + 3 * len(widths) + 1
@@ -1185,7 +1615,7 @@ def render_table(items, columns=None, sort_by=None, filter_by=None, max_width=30
     def fmt_row(cells):
         return "| " + " | ".join(c.ljust(widths[i]) for i, c in enumerate(cells)) + " |"
 
-    print(fmt_row(cols))
+    print(fmt_row(headers))
     print("|-" + "-+-".join("-" * w for w in widths) + "-|")
 
     if sectioned:
@@ -1236,7 +1666,7 @@ def write_xlsx(
 
     # Header row
     for col_idx, col in enumerate(cols, 1):
-        cell = ws.cell(row=1, column=col_idx, value=col)
+        cell = ws.cell(row=1, column=col_idx, value=header_label(col))
         cell.fill = header_fill
         cell.font = header_font
         cell.alignment = Alignment(wrap_text=False)
@@ -1283,7 +1713,7 @@ def write_xlsx(
 
     # Auto-fit column widths (capped at 60)
     for col_idx, col in enumerate(cols, 1):
-        max_len = len(col)
+        max_len = len(header_label(col))
         for row in ws.iter_rows(min_row=2, min_col=col_idx, max_col=col_idx):
             for cell in row:
                 if cell.value:
@@ -1446,7 +1876,20 @@ def main():
         metavar="COLLECTION",
         help="Append a Zotero collection's papers into the file (append-only)",
     )
+    parser.add_argument(
+        "--from-obsidian",
+        metavar="PATH",
+        help="Append Obsidian notes (a .md file or folder) into the file (append-only)",
+    )
+    parser.add_argument(
+        "--category",
+        help="Category for --from-obsidian notes (default: each note's folder name)",
+    )
     args = parser.parse_args()
+
+    if args.from_obsidian:
+        import_from_obsidian(args.file, args.from_obsidian, args.category)
+        return
 
     if args.from_zotero:
         import_from_zotero(args.file, args.from_zotero)
