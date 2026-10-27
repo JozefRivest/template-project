@@ -95,3 +95,37 @@ make paper/0_main.pdf
 ```
 
 to build the paper.
+
+## Reading notes
+
+The folder `notes` contains a python and yaml file. The python files allow you to
+import papers from Zotero and/or Obsidian in the `readings.yaml` under a very specific
+structure. You can also import collections from Zotero
+
+```bash
+# For Zotero
+python org_table.py readings.yaml --from-zotero "RDD papers" # To import a collection
+# For Obsidian
+python org_table.py readings.yaml --from-obsidian ~/Vault/Literature
+python org_table.py readings.yaml --from-obsidian note.md --category "RDD papers"
+```
+
+You can then create a spreadsheet using all the entries from the `readings.yaml`
+file to visualize the different papers you have
+
+```bash
+python org_table.py readings.yaml --live
+```
+
+Or you can also open a citation graph for the papers you have in your reading notes,
+or to see which papers you don't have that are cited or that cited the papers you have.
+
+```bash
+python org_table.py readings.yaml --graph
+```
+
+Finally, you can also export the table to a xlsx file
+
+```bash
+python org_table.py readings.yaml --xlsx
+```
